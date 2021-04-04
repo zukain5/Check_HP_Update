@@ -1,0 +1,2 @@
+# Check_HP_Update
+シス創のHPを巡回して新たなお知らせをslackに投げる
