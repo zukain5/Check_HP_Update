@@ -2,6 +2,9 @@ import requests
 import datetime
 import csv
 import slackweb
+import yaml
+import logging
+import logging.config
 from bs4 import BeautifulSoup
 from const import CSV_PATH, SLACK_URL
 
@@ -51,12 +54,27 @@ def diff(list_a, list_b):
     return list_result
 
 
-def main():
+def main(logger):
     # 定数とか
-    url = 'https://www.si.t.u-tokyo.ac.jp/'
-    notify_course = ['sdm', 'other']
+    HP_URL = 'https://www.si.t.u-tokyo.ac.jp/'
+    NORTIFY_COURSE = ['sdm', 'other']
+    COURSE_COLOR = {
+        'ee': '#3c6f3c',
+        'sdm': '#004389',
+        'psi': '#be0b3c',
+        'other': '#a0a0a0'
+    }
 
-    res = requests.get(url)
+    try:
+        res = requests.get(HP_URL)
+    except requests.exceptions.RequestException as e:
+        logger.critical('シス創HPとの接続でエラーが発生。')
+        logger.critical('HTTPステータスコード:' + res.status_code)
+        logger.critical(e)
+        return -1
+    else:
+        logger.info('シス創HPからhtml取得完了')
+
     soup = BeautifulSoup(res.text, 'html.parser')
 
     # 学科生へのお知らせをオブジェクト化する
@@ -72,22 +90,30 @@ def main():
         title = elem.string
         link = elem['href']
 
-        if course in notify_course:
+        logger.debug(f'お知らせを取得。タイトル:{title}')
+
+        if course in NORTIFY_COURSE:
             inner_notice_list.append(InnerNotice(date, link, title, course))
+            logger.debug(f'お知らせのコース({course})が通知対象だったためオブジェクト化しリストに追加。')
+
+    logger.info('学科生へのお知らせのオブジェクト化完了')
 
     # 過去のお知らせcsvを読み込む
     pre_inner_notice_list = []
     try:
         with open(CSV_PATH, encoding='utf_8_sig') as f:
             reader = csv.reader(f)
+            logger.info('過去のお知らせcsvの読み込みに成功')
             for row in reader:
                 date = str_to_date(row[0])
                 link = row[1]
                 title = row[2]
                 course = row[3]
                 pre_inner_notice_list.append(InnerNotice(date, link, title, course))
+                logger.debug(f'過去のお知らせを取得。タイトル:{title}')
+            logger.info('過去のお知らせのリスト化完了')
     except FileNotFoundError:
-        pass
+        logger.warning('csvが存在しなかったため、過去のお知らせはないものとします。')
 
     # 過去のお知らせと比較し、新たなお知らせを取得
     new_inner_notice_list = diff(inner_notice_list, pre_inner_notice_list)
@@ -97,15 +123,9 @@ def main():
 
     attachments = []
     for new_inner_notice in new_inner_notice_list:
-        course_color = {
-            'ee': '#3c6f3c',
-            'sdm': '#004389',
-            'psi': '#be0b3c',
-            'other': '#a0a0a0'
-        }
-
+        logger.debug(f'過去のお知らせとの差分から新しいお知らせを取得。タイトル:{new_inner_notice.title}')
         attachments.append({
-            'color': course_color[new_inner_notice.course],
+            'color': COURSE_COLOR[new_inner_notice.course],
             'title': new_inner_notice.title,
             'title_link': new_inner_notice.link,
             'fields': [
@@ -124,17 +144,36 @@ def main():
 
     if new_inner_notice_list != []:
         slack.notify(text='新しいお知らせ', attachments=attachments)
+        logger.info('新しいお知らせをSlackに通知完了')
+    else:
+        logger.info('新しいお知らせはなかったためSlackには何も通知しません')
 
     # 現在のお知らせをすべてcsvに記録
     with open(CSV_PATH, 'w', encoding='utf_8_sig') as f:
         writer = csv.writer(f)
+        logger.info('お知らせ記録用のcsvファイルを開くことに成功')
         for inner_notice in inner_notice_list:
             date = inner_notice.date.strftime('%Y.%m.%d')
             link = inner_notice.link
             title = inner_notice.title
             course = inner_notice.course
             writer.writerow([date, link, title, course])
+            logger.debug(f'お知らせを記録。タイトル:{title}')
+
+    logger.info('お知らせをcsvに記録完了')
+
+
+def set_logging():
+    with open('logging_conf.yml', 'r', encoding='utf-8') as f:
+        env_data = yaml.safe_load(f)
+    logconfig_dict = env_data['log_config']
+    logging.config.dictConfig(logconfig_dict)
 
 
 if __name__ == '__main__':
-    main()
+    set_logging()
+    logger = logging.getLogger(__name__)
+
+    logger.info('実行開始')
+    main(logger)
+    logger.info('実行完了')
