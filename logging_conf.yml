@@ -25,6 +25,6 @@ log_config:
   root:
     level: DEBUG
     handlers:
-      - console
+      # - console
       - file
   disable_existing_loggers: False
